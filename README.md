@@ -20,7 +20,6 @@ A quantitative equity strategy that uses economic regime classification combined
 - [Feature Engineering](#feature-engineering)
 - [Future Enhancements](#future-enhancements)
 - [Disclaimer](#disclaimer)
-- [License](#license)
 
 ## Overview
 
