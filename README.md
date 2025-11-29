@@ -1,329 +1,211 @@
-# Value-Quality Stock Selection Model
+# Regime-Switching XGBoost Stock Selection Model
 
-A quantitative stock selection framework that combines economic regime classification with adaptive valuation metrics to identify investment-grade stocks. The model uses PCA-based regime detection and trains separate XGBoost classifiers for different economic environments, dynamically selecting the most predictive valuation metric for each company.
+A quantitative equity strategy that uses economic regime classification combined with machine learning to identify stocks likely to outperform over the next 12 months. The model trains separate XGBoost classifiers for different macroeconomic environments and applies canonical factor investing principles (value, quality, momentum predictors) validated by academic research.
 
 **Key Features:**
-- PCA-driven economic regime classification with K-means clustering (3 regimes)
-- Adaptive valuation metric selection based on historical alpha correlation
-- Company-specific and industry-relative percentile rankings (5-year rolling windows)
-- XGBoost ensemble classifiers with regime-specific training (4 separate models per fold)
-- Forward-step validation with expanding training windows and out-of-time testing
-- Binary classification approach (investment-grade vs non-investment-grade stocks)
+- BigQuery data warehouse with 640K+ company-quarter observations (2000-2025)
+- Automated weekly data pipelines via GitHub Actions
+- PCA-driven economic regime classification with K-means clustering (3 regimes: Growth, Slow Growth, Recession)
+- Factor-based feature engineering aligned with academic research (value, quality, momentum)
+- Regime-specific XGBoost ensemble classifiers
+- Forward-step k-fold cross-validation with 1-year embargo periods
+
 
 ## Table of Contents
 
 - [Overview](#overview)
 - [Model Architecture](#model-architecture)
 - [Data Requirements](#data-requirements)
-- [Installation \& Setup](#installation--setup)
-- [Usage](#usage)
-- [File Structure](#file-structure)
 - [Model Methodology](#model-methodology)
 - [Feature Engineering](#feature-engineering)
-- [Risk Management](#risk-management)
-- [Contributing](#contributing)
+- [Validation Framework](#validation-framework)
+- [Model Performance](#model-performance)
+- [Known Limitations](#known-limitations)
+- [Future Enhancements](#future-enhancements)
 - [Disclaimer](#disclaimer)
 - [License](#license)
 
 ## Overview
 
-This project implements a multi-stage quantitative stock selection model that adapts both its valuation methodology and predictive approach to different economic environments. Rather than applying a single valuation metric to all companies, the model identifies each company's most predictive valuation metric based on historical alpha correlation, then applies regime-specific models to classify stocks.
+This project implements a regime-switching quantitative stock selection framework that adapts its predictive models to changing macroeconomic conditions. Rather than applying a single model to all market environments, the system identifies the current economic regime and applies the appropriate regime-trained classifier.
 
-**Core Innovation:** The model combines two levels of adaptation:
-1. **Company-Level**: Selects the valuation metric with strongest historical correlation to forward returns for each company
-2. **Regime-Level**: Trains separate classification models for each economic environment
+**Core Innovation:** Two-stage adaptive modeling:
+1. **Regime-Level**: Classify macroeconomic environment using unsupervised learning (PCA + K-means)
+2. **Stock-Level**: Apply regime-specific XGBoost models trained on historical factor performance within that regime
 
-**Business Objective:** Generate consistent alpha by dynamically adjusting both the valuation methodology and the classification approach based on company-specific historical patterns and prevailing economic conditions.
+**Business Objective:** Generate consistent alpha by adapting stock selection criteria to prevailing economic conditions, using factors (value, quality, momentum) proven effective in academic research.
 
 ## Model Architecture
-
 ```
 Economic Data → PCA Reduction → K-Means → Feature Engineering → Regime-Specific → Binary
      ↓              ↓              ↓            ↓                  XGBoost          Classification
-Macro Variables  2 Principal   3 Economic   Adaptive Valuation   Classifiers      Investment Grade
-(GDP MA,         Components    Regimes      Metric Selection     (4 per fold)     vs Non-Grade
-Fed Funds MA,                              (P/E, P/B, P/FCF,
-Yield Curve)                               EV/EBIT, EV/EBITDA)
+Macro Variables  2 Principal   3 Economic   Value/Quality/      Classifiers      Investment Grade
+(GDP MA,         Components    Regimes      Momentum Factors    (separate per    vs Non-Grade
+Fed Funds MA,                 (Growth,      + Industry          regime)
+Yield Curve)                   Slow Growth, Rankings
+                              Recession)
 ```
 
 ### Model Components
 
 1. **Economic Regime Classifier**: 
-   - PCA dimensionality reduction (16 macro variables → 2 principal components)
-   - K-means clustering on principal components (k=3 regimes)
-   - Training period: 1985-2005, applied 2000-present
+   - **Unsupervised learning approach:** PCA dimensionality reduction + K-means clustering
+   - **Input:** 16 macroeconomic variables from FRED (GDP, Fed Funds Rate, Yield Curve, Unemployment, Housing Starts, Industrial Production)
+   - **PCA:** Reduces to 2 principal components, trained on 1985-2005 period
+   - **K-means:** 3 clusters representing Growth, Slow Growth, and Recession regimes
+   - **Application:** Quarterly regime classification from 2005-present with 1-quarter lag
    
-2. **Adaptive Valuation Framework**:
-   - Evaluates 6 valuation metrics per company: P/E, P/B, P/TB, P/FCF, EV/EBIT, EV/EBITDA
-   - Calculates alpha correlation for each metric using historical 20th-30th percentile thresholds
-   - Selects "best valuation measure" with strongest predictive power
-   
-3. **Feature Engineering Pipeline**: 
-   - Company-specific percentile rankings (5-year rolling window)
-   - Industry-relative valuation metrics (vs P25, P50, P75 quantiles)
-   - Winsorization at 5th/95th percentiles
-   - Alpha correlation metrics for dynamic valuation selection
+2. **Factor-Based Feature Engineering**: 
+   - **Value factors:** EV/EBIT, EV/EBITDA, P/E, P/FCF, P/B, P/TB percentiles
+   - **Quality factors:** ROE, Piotroski F-Score, cash flow persistence, industry rankings
+   - **Momentum factors:** 3-month and 12-month price momentum
+   - **Additional signals:** Superinvestor holdings, insider trading activity
+   - All features calculated as industry-relative percentiles and company-specific historical percentiles
 
-4. **Ensemble Classification Models**: 
-   - Binary target: Investment-grade stocks (based on forward return thresholds)
-   - 4 regime-specific XGBoost classifier models per validation fold
-   - Separate models for classification and regression variants
-   
-5. **Validation Framework**: 
-   - Forward-step validation with expanding training windows
-   - Custom data splits using k-fold temporal partitions
-   - Out-of-time validation on future periods
+3. **XGBoost Ensemble Models**: 
+   - **Separate models per regime:** 3 regimes × multiple validation folds = 12+ models
+   - **Model type:** Boosted Tree Classifier (binary classification)
+   - **Target variable:** Percentile ranking for 12 month forward returns bucketed into 5 distinct buckets (top 20th percentile, next 20th, etc...)
+   - **Validation:** Forward-step k-fold with expanding training windows, 1 year embargo periods between training and validation
 
 ## Data Requirements
 
-### Primary Data Sources
+**Primary Data Sources:**
+- **SEC EDGAR filings:** 10-K and 10-Q fundamental data (2000-2025)
+- **FRED Economic Data:** Macroeconomic indicators for regime classification
+- **Yahoo Finance:** Daily stock prices for momentum calculations (In progress, currently using quarterly prices)
+- **Dataroma:** Superinvestor holdings data (13F filings aggregated)
+- **SEC Form 4:** Insider trading data (In progress)
 
-**Market Data:**
-- Daily equity prices and volumes (comprehensive US equity universe)
-- Market capitalization data (minimum $2B threshold recommended)
-- Industry classifications (custom 25+ industry taxonomy)
-- Quarterly rebalancing dates
+**Data Infrastructure:**
+- **Storage:** Google BigQuery data warehouse
+- **Volume:** 640K+ company-quarter observations from NASDAQ and NYSE listed companies (>$300M market cap)
+- **Update frequency:** Daily automated pipelines via GitHub Actions
+- **Cost:** ~$1/month (BigQuery storage + compute)
 
-**Fundamental Data:**
-- Quarterly financial statements (Balance Sheet, Income Statement, Cash Flow)
-- At least 5 years of historical data required for percentile calculations
-- Valuation metrics: P/E, P/B, P/TB, P/FCF, EV/EBIT, EV/EBITDA
-- Quality metrics: ROE, profitability indicators, growth rates
-
-**Macroeconomic Data (FRED sources):**
-- **Primary Variables (for PCA)**:
-  - GDP growth (2-quarter moving average)
-  - Federal Funds Rate year-over-year change (2-quarter moving average)
-  - Yield Curve Spread (10Y-2Y, 2-quarter moving average)
-
-- **Additional Variables (for feature engineering)**:
-  - Unemployment rate and volatility measures
-  - Housing starts trend indicators
-  - Industrial production metrics
-  - Inflation data
-  
-### Storage Requirements
-
-- **BigQuery Dataset Size**: ~500GB for 10-year history with comprehensive feature set
-- **Processing Memory**: 16GB RAM minimum for model training queries
-- **Query Cost Estimate**: $50-100/month for regular backtesting and retraining
-
-## Installation & Setup
-
-### Prerequisites
-
-```bash
-# Python environment (for data ingestion and orchestration)
-pip install google-cloud-bigquery
-pip install pandas numpy
-
-# BigQuery authentication
-gcloud auth application-default login
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-```
-
-### BigQuery Setup
-
-1. **Enable BigQuery API** in Google Cloud Console
-
-2. **Create dataset** for model artifacts:
-```sql
-CREATE SCHEMA IF NOT EXISTS `your-project.value_quality_model`;
-CREATE SCHEMA IF NOT EXISTS `your-project.macroeconomic_data`;
-```
-
-3. **Set up service account** with BigQuery Data Editor and BigQuery ML User permissions
-
-4. **Configure billing** with sufficient quota for ML operations (BQML models can be resource-intensive)
-
-### Data Pipeline Setup
-
-```sql
--- Load your fundamental and market data into base tables
--- Create economic indicators table
-CREATE TABLE `your-project.macroeconomic_data.macro_indicators_value_quality_model_quarterly` AS
-SELECT * FROM your_macro_data_source;
-
--- Verify data structure matches expected schema
-```
-
-## Usage
-
-### Quick Start
-
-The model consists of three main execution stages that must be run sequentially:
-
-### Running Full Pipeline
-
-**1. Build Economic Features & Train Regime Classifier**
-```bash
-# First, build the economic features from raw macro data
-bq query --use_legacy_sql=false < build-economic-features.sql
-
-# Then train the PCA and K-means regime classifier
-bq query --use_legacy_sql=false < train-economic-regime-classifier.sql
-```
-
-**2. Feature Engineering & Model Training**
-```bash
-# Build comprehensive stock features with adaptive valuation metrics
-bq query --use_legacy_sql=false < value-quality-stock-return-feature-extraction-model-build.sql
-```
-
-**3. Cross-Validation Training**
-```bash
-# Train all regime-specific models with forward-step validation
-# This creates 4 regime models × multiple folds × classification & regression variants
-bq query --use_legacy_sql=false < XGBoost-5Fold-Forward-Step-Validation-Model-Build.sql
-```
-
-**4. Generate Predictions**
-```bash
-# Predict current economic regime
-bq query --use_legacy_sql=false < predict-economic-regime.sql
-
-# Generate stock classifications using appropriate regime model
-# (Query the relevant model based on predicted regime)
-```
-
-### Python Integration Example
-
-```python
-from google.cloud import bigquery
-import pandas as pd
-
-client = bigquery.Client()
-
-# Get current economic regime
-regime_query = """
-SELECT DISTINCT 
-  quarter_end,
-  CENTROID_ID as regime,
-  principal_component_1,
-  principal_component_2
-FROM ML.PREDICT(
-  MODEL `your-project.macroeconomic_data.macro_regime_kmeans`,
-  (SELECT * FROM `your-project.macroeconomic_data.principal_components_current`)
-)
-ORDER BY quarter_end DESC
-LIMIT 1
-"""
-current_regime = client.query(regime_query).to_dataframe()['regime'].iloc[0]
-
-# Get stock predictions for current regime
-predictions_query = f"""
-SELECT 
-  company_id,
-  symbol,
-  predicted_investment_grade,
-  predicted_investment_grade_probs[OFFSET(1)].prob as investment_grade_probability
-FROM ML.PREDICT(
-  MODEL `your-project.value_quality_model.value_quality_model_k{current_regime}_1`,
-  (SELECT * EXCEPT(period_end_date) 
-   FROM `your-project.value_quality_model.current_stock_features`)
-)
-WHERE predicted_investment_grade = TRUE
-ORDER BY investment_grade_probability DESC
-LIMIT 50
-"""
-
-top_stocks = client.query(predictions_query).to_dataframe()
-print(f"Current Regime: {current_regime}")
-print(f"\nTop 10 Investment-Grade Stock Candidates:\n{top_stocks.head(10)}")
-```
-
-## File Structure
-
-```
-├── README.md
-├── train-economic-regime-classifier.sql    # PCA + K-means regime classification
-├── predict-economic-regime.sql             # Apply trained regime classifier
-├── build-economic-features.sql             # Prepare macro features
-├── value-quality-stock-return-feature-extraction-model-build.sql  # Core feature engineering
-└── XGBoost-5Fold-Forward-Step-Validation-Model-Build.sql         # Train all models
-```
+**Data Quality Requirements:**
+- Minimum 5-year history for percentile calculations
+- Price > 0, next_year_price > 0, market_cap > 0
+- Winsorization at 2nd/98th percentiles for all relevant predictors to limit outlier impact
 
 ## Model Methodology
 
 ### Economic Regime Classification
 
-**Approach**: PCA + K-means unsupervised learning
+**Approach:** Unsupervised learning (PCA + K-means)
 
-**Step 1 - Dimensionality Reduction**:
-- **Input Variables** (16 macroeconomic indicators, winsorized):
-  - GDP 2-quarter moving average (winsorized 5th-95th percentile)
-  - Federal Funds Rate YoY change 2Q MA (winsorized)
-  - Yield Curve Spread 2Q MA (winsorized)
-  - Plus additional volatility and trend measures
+**Step 1 - Dimensionality Reduction (PCA):**
+- **Input variables:** 16 macroeconomic indicators, winsorized at 5th-95th percentiles:
+  - GDP 2-quarter moving average
+  - Federal Funds Rate year-over-year change (2Q MA)
+  - Yield Curve Spread (2Q MA)
+  - Unemployment rate, housing starts, industrial production trends and volatilities
 
-- **PCA Configuration**:
+- **PCA configuration:**
   - Standard scaler normalization
   - Reduction to 2 principal components
-  - Training period: 1985-2005
-  - Additional winsorization on PC scores at ±1.96 (prevent outlier influence)
+  - Training period: 1985-2005 (pre-financial crisis era)
+  - PC scores additionally winsorized at ±1.96 to prevent outlier influence
 
-**Step 2 - Regime Clustering**:
-- **K-means Algorithm**:
-  - num_clusters = 3 (not 4 as in traditional models)
-  - kmeans_init_method = 'KMEANS_PLUS_PLUS'
+**Step 2 - Regime Clustering (K-means):**
+- **Algorithm:** K-means++ initialization
+- **Number of clusters:** 3 economic regimes
+  - **Regime 1 (Slow Growth):** Low growth, moderate volatility
+  - **Regime 2 (Recession):** Negative growth, high volatility
+  - **Regime 3 (Growth):** Positive growth, stable conditions
+- **Parameters:**
   - max_iterations = 50
-  - early_stop = TRUE
-  - distance_type = 'EUCLIDEAN'
+  - distance_type = EUCLIDEAN
+  - standardize_features = TRUE
 
-**Regime Application**:
-- Applied to quarterly data from 2000-present
-- Lagged 1 quarter to avoid look-ahead bias
-
-### Adaptive Valuation Framework
-
-**Core Concept**: Different valuation metrics predict returns better for different companies. Rather than applying P/E uniformly, the model identifies which metric historically worked best for each company.
-
-**Valuation Metrics Evaluated**:
-1. Price-to-Earnings (P/E)
-2. Price-to-Book (P/B)
-3. Price-to-Tangible Book (P/TB)
-4. Price-to-Free Cash Flow (P/FCF)
-5. Enterprise Value / EBIT
-6. Enterprise Value / EBITDA
-
-**Alpha Correlation Methodology**:
-- Calculate 20th and 30th percentile thresholds for each metric over 5-year rolling window
-- Measure correlation between "trading below 20th-30th percentile" and subsequent forward returns
-- Select the valuation metric with strongest positive alpha correlation
-- This "best valuation measure" becomes the primary feature for that company
+**Regime Application:**
+- Applied quarterly from 2000-present
+- **1-quarter lag** to avoid look-ahead bias (use Q1 regime to predict Q2 stocks)
+- Regime labels stored in BigQuery table for model routing
 
 ### Feature Engineering
 
-**Company-Specific Historical Percentiles** (5-year rolling window):
-- Current valuation vs own historical distribution
-- Percentile rankings: Full distribution (0-100)
-- Ratios: Current value / P25, P50, P75 historical thresholds
+**Top Features by Importance (Validated Against Academic Research):**
 
-**Industry-Relative Metrics**:
-- Current valuation vs industry peer distribution (same 5-year window)
-- Industry quantile ratios: Current value / Industry P25, P50, P75
-- Custom industry taxonomy with 25+ sectors
+The model's feature importance rankings align remarkably well with established factor investing literature:
 
-**Winsorization**:
-- All continuous features winsorized at 5th/95th percentiles within quarter
-- Prevents extreme outlier distortion
-- Applied before percentile calculations and model training
+1. **ev_ebit_winsorized** - Enterprise Value to EBIT (primary value factor)
+2. **price_momentum_12mo_winsorized** - 12-month price momentum (canonical momentum factor)
+3. **pe_winsorized** - Price to Earnings ratio (traditional value)
+4. **ev_ebitda_winsorized** - Enterprise Value to EBITDA (value factor)
+5. **market_cap_buckets** - Size factor (small-cap premium)
+6. **industry_id** - Sector classification
+7. **revenue_cagr_10_winsorized** - 10-year revenue growth (quality/growth)
+8. **momentum_12mo_industry_ranking** - Relative momentum within industry
+9. **price_momentum_3mo_winsorized** - Short-term momentum
+10. **ev_ebitda_over_p50_industry_winsorized** - Industry-relative valuation
+11. **ptb_winsorized** - Price to Tangible Book (value factor)
+12. **ev_ebit_percentile_industry** - Industry-relative EV/EBIT ranking
+13. **pfcf_winsorized** - Price to Free Cash Flow (value factor)
+14. **piotroski_f_score** - 9-point fundamental quality score (Piotroski 2000)
+15. **return_on_equity_winsorized** - Profitability factor (quality)
+16. **gross_profit_to_total_assets_industry_ranking** - Asset efficiency (quality)
+17. **roic_industry_ranking** - Return on Invested Capital ranking (quality)
+18. **growth_consistency_score** - Revenue/earnings stability
 
-**Alpha Correlation Features**:
-- Best valuation measure identifier per company
-- Alpha correlation strength score
-- Dynamic weighting based on correlation stability
+This feature hierarchy validates the model's foundation in established factor research rather than data mining artifacts.
+
+**Value Factors:**
+All valuation metrics calculated as both winsorized absolute values and industry-relative percentiles:
+- **EV/EBIT** - Enterprise value to operating income (top importance)
+- **EV/EBITDA** - Enterprise value to EBITDA
+- **P/E ratio** - Price to earnings
+- **P/FCF** - Price to free cash flow  
+- **P/B** - Price to book value
+- **P/TB** - Price to tangible book value
+- **Industry-relative comparisons** - Current value vs industry P50 thresholds
+
+**Quality Factors:**
+- **Piotroski F-Score** - 9-point fundamental strength score:
+  - Profitability: ROA > 0, Operating cash flow > 0, FCF > Net Income
+  - Leverage/Liquidity: Decreasing leverage, improving current ratio, no dilution
+  - Operating Efficiency: Improving margin, improving asset turnover, revenue growth
+- **Return on Equity (ROE)** - Company-specific and industry-relative rankings
+- **ROE trend** - 5-year trend in profitability
+- **ROIC industry ranking** - Return on invested capital vs peers
+- **Revenue/EPS CAGR (10-year)** - Long-term sustainable growth rates
+- **Cash flow persistence** - Consistency of positive FCF over 5 years
+- **Gross profit to assets** - Margin quality indicator
+- **Growth consistency score** - Stability of revenue and earnings growth
+
+**Momentum Factors:**
+- **12-month price momentum** - Canonical momentum factor (top 2 importance)
+- **3-month price momentum** - Short-term trend confirmation
+- **12-month momentum industry ranking** - Relative strength within sector
+
+**Size Factor:**
+- **Market cap buckets** - Large-cap, Mid-cap, Small-cap, Micro-cap classification
+- Controls for size effect documented in Fama-French research
+
+**Additional Alpha Signals:**
+- **Superinvestor holdings %** - Ownership by prominent value investors (13F filings)
+- **Change in superinvestor holdings** - Recent insider buying/selling activity
+- **Total distribution yield** - Dividends + buybacks % of market cap
+- **Industry classification** - Sector-specific patterns
+
+**Feature Transformations:**
+- **Winsorization:** All continuous features at 2nd/98th percentiles per quarter to limit outlier impact
+- **Industry-relative percentiles:** Current value vs industry distribution (rolling 5-year window)
+- **Historical percentiles:** Current value vs company's own history (rolling 5-year window)
+- **Standardization:** Z-score normalization for features with wide ranges
+- **Missing data imputation:** Sector medians for missing fundamental values
+
 
 ### XGBoost Model Configuration
 
-**Model Type**: Boosted Tree Classifier (Binary Classification)
+**Model Type:** Boosted Tree Classifier (Binary Classification)
 
-**Target Variable**: 
-- `investment_grade` (Boolean)
-- Based on forward return thresholds and quality criteria
-- Splits stocks into investment-grade vs non-investment-grade
+**Target Variable:** 
+- `investment_grade` (5-level classification)
+- Defined by forward return thresholds and quality screening
+- Separates high-potential stocks from the broader universe
 
-**Hyperparameters** (consistent across regime models):
+**Hyperparameters** (regime-specific models):
 ```yaml
 model_type: BOOSTED_TREE_CLASSIFIER
 num_parallel_tree: 6
@@ -331,228 +213,56 @@ max_tree_depth: 5
 max_iterations: 400
 learn_rate: 0.03
 subsample: 0.7
-l1_reg: 1.0
-l2_reg: 0.5
+l1_reg: 1.0 - 2.0  # Varies by regime
+l2_reg: 0.5 - 2.0  # Varies by regime
 min_rel_progress: 0.0001
-data_split_method: CUSTOM
+data_split_method: CUSTOM  # Uses temporal split
 ```
 
-**Model Structure**:
-- **4 regime-specific models per fold** (k1, k2, k3, k4)
-- Separate classifier and regressor variants
-- Each model trained on expanding window of historical data
-- Out-of-time validation on future periods
+## Future Enhancements
 
-**Training Approach**:
-- Forward-step validation: K1 trains on early data, validates on later; K2 expands window, etc.
-- Custom data splits based on temporal k-fold assignments
-- Minimum training window ensures sufficient data per regime
-- Monthly/quarterly rebalancing
+**Regime Modeling:**
+- Experiment with 4-5 clusters for finer economic distinctions
+- Update PCA training period to include 2008 financial crisis and COVID
+- Add regime transition smoothing to reduce whipsaw
+- Test regime-conditional factor weighting
 
-## Feature Engineering
+**Feature Engineering:**
+- Expand quality metrics (asset turnover, working capital management)
+- Add analyst sentiment and revision features
+- Add insider trading data / feature engineering
+- Ingest 10k/10q raw text for feature engineering and sentiment analyses
+- Incorporate options-implied volatility as risk measure
+- Test alternative momentum definitions (6-month, 9-month)
 
-### Data Preprocessing
+**Model Architecture:**
+- Implement stacking ensemble across regime models
+- Add calibration layer for probability scores
+- Test regime probability weighting vs hard regime assignment
+- Explore gradient boosting alternatives (LightGBM, CatBoost)
 
-**Outlier Treatment**:
-- Winsorization at 5th and 95th percentiles (applied within each quarter)
-- Missing value handling through sector median imputation
-- Time-series gap filling with forward fill (limited to 1 quarter max)
-
-**Normalization**:
-- Historical percentile ranking within company (5-year window)
-- Historical percentile ranking within industry (5-year window)
-- Standard scaling for macroeconomic PCA inputs
-- Z-score normalization optional for certain features
-
-**Lag Structure**:
-- Fundamental data: 1-quarter lag minimum (reporting delays)
-- Market data: Point-in-time snapshots at quarter end
-- Macro data: Aligned to quarter-end
-- Economic regime: 1-quarter lag to avoid look-ahead
-
-### Critical Features
-
-Based on the actual implementation, these are the key feature categories (features marked as EXCLUDED are not used):
-
-**Valuation Features** (Primary):
-- Adaptive "best valuation measure" per company
-- Company-specific percentile rankings
-- Industry-relative ratios (vs P25, P50, P75)
-- Alpha correlation measures
-
-**Quality Features**:
-- ROE-related metrics and trends
-- Profitability persistence measures
-- Debt metrics and balance sheet strength
-- Cash flow quality indicators
-
-**Growth Features**:
-- 10-year CAGRs (revenue, EPS, total equity)
-- Quarter-over-quarter trends
-- Industry growth relative positioning
-
-**Features Explicitly EXCLUDED** (from the code):
-- Raw price levels
-- Market cap (used only for filtering)
-- Raw volatility metrics (macro and company)
-- Certain momentum indicators (3mo, 12mo price momentum excluded)
-- Raw valuation multiples (only percentile versions used)
-- Dividend yield
-- Several macro variables (used only in regime classification, not stock model)
-
-### Feature Validation
-
-**Correlation Management**: 
-- Multicollinearity addressed through feature exclusion
-- Many correlated features removed (see EXCLUDE list in code)
-- Focus on orthogonal information sources
-
-**Stability Requirements**: 
-- Features must have 5 years of history for percentile calculations
-- Companies without sufficient history excluded from training
-- Forward-fill limited to 1 quarter to prevent stale data
-
-## Risk Management
-
-### Model Risk Controls
-
-**Overfitting Prevention**:
-- Forward-step validation (no data leakage)
-- Custom temporal data splits
-- Out-of-time testing on completely holdout periods
-- Separate validation metrics tracked per fold and regime
-- L1/L2 regularization (1.0 and 0.5 respectively)
-
-**Data Quality**:
-- Winsorization limits extreme value impact
-- Missing data imputation using sector medians
-- Filters: price > 0, next_year_price > 0, market_cap > 0
-- Minimum history requirements (5 years for percentiles)
-
-**Position Limits** (implementation-dependent):
-- Binary classification output enables flexible position sizing
-- Probability scores allow ranking within investment-grade universe
-- Recommended: Max single stock 3%, max sector 25%, min market cap $2B
-
-### Model Monitoring
-
-**Performance Tracking**:
-- ROC-AUC tracked per fold and regime
-- Precision, recall, F1-score calculated on validation sets
-- Feature importance monitored via ML.FEATURE_IMPORTANCE
-- Out-of-time performance compared to in-sample
-
-**Regime Transition Handling**:
-- Quarterly regime updates with 1-quarter lag
-- Potential for regime smoothing (not currently implemented)
-- Model selection based on predicted regime
-
-**Retraining Schedule**:
-- Quarterly retraining recommended (aligns with fundamental data)
-- Annual full model rebuild (including regime classifier)
-- Continuous monitoring of feature drift and model decay
-
-### Known Limitations
-
-1. **Regime Classification**:
-   - Uses only 3 clusters (may miss nuance in some market conditions)
-   - PCA trained on 1985-2005 period may not capture modern market dynamics
-   - Quarterly updates create lag in regime adaptation
-
-2. **Valuation Metric Selection**:
-   - Requires 5-year history per company (excludes recent IPOs)
-   - Alpha correlation based on historical data (may not predict future best metric)
-   - Fixed 20th-30th percentile thresholds may not be optimal for all stocks
-
-3. **Binary Classification**:
-   - Investment-grade threshold is static
-   - Loss of granularity vs regression approach
-   - May underweight probability scores if using simple binary output
-
-4. **Data Dependencies**:
-   - Heavily dependent on clean fundamental data
-   - Industry classification quality affects percentile calculations
-   - Macro data lag in FRED sources
-
-## Contributing
-
-Contributions welcome! Areas for improvement:
-
-1. **Regime Enhancement**: 
-   - Experiment with 4-5 clusters
-   - Update PCA training period to include recent decades
-   - Add regime transition smoothing logic
-
-2. **Feature Engineering**:
-   - Expand to more quality metrics
-   - Add analyst sentiment features
-   - Incorporate options-based risk measures
-
-3. **Model Architecture**:
-   - Test ensemble approaches across regime models
-   - Implement stacking with regime probabilities
-   - Add calibration layer for probability scores
-
-4. **Validation**:
-   - Expand out-of-sample testing periods
-   - Add transaction cost simulation
-   - Implement Monte Carlo sensitivity analysis
-
-### Development Setup
-
-```bash
-# Clone repository
-git clone https://github.com/your-username/value-quality-stock-selection.git
-
-# Set up BigQuery access
-gcloud auth application-default login
-
-# Configure your project ID
-export GOOGLE_CLOUD_PROJECT="your-project-id"
-
-# Load sample data and test queries
-bq query --use_legacy_sql=false < test_queries/validate_setup.sql
-```
+**Validation & Risk Management:**
+- Implement purged k-fold cross-validation (López de Prado)
+- Build transaction cost simulator with market impact models
+- Refine development of position sizing logic using Kelly criterion or risk parity
 
 ## Disclaimer
 
-**Important Risk Disclosure**: This model is for educational and research purposes only. All backtests shown are simulated and may not reflect actual trading results. The model may experience significant losses during regime transitions or periods not well-represented in training data.
+**Important Risk Disclosure:** This model is for educational and research purposes only. Past performance does not guarantee future results. The model may experience significant losses, particularly during regime transitions or unprecedented market conditions not represented in historical data.
 
-**Not Investment Advice**: This software is not intended as investment advice or recommendations. Past performance does not indicate future results. Users should conduct their own due diligence and consult with qualified financial advisors.
+**Not Investment Advice:** This software is not investment advice or a recommendation to buy/sell securities. Users must conduct their own due diligence and consult qualified financial advisors before making investment decisions.
 
-**Model Limitations**:
-- **Data Quality Dependency**: Model performance critically depends on clean, accurate fundamental and macroeconomic data
-- **Regime Detection Lag**: Economic regime classification operates on quarterly lag, may miss rapid market transitions
-- **Historical Bias**: Valuation metric selection based on historical alpha may not persist in future periods
-- **Survivorship Bias**: Ensure training data includes delisted/bankrupt companies to avoid overstating performance
-- **Transaction Costs**: Backtest results do not reflect trading costs, market impact, or implementation shortfall
-- **Overfitting Risk**: Despite validation procedures, in-sample optimization may not generalize to future markets
+**Model Limitations:**
+- **Backtest Overfitting:** Historical performance likely overstates future results due to data mining, look-ahead bias, and survivorship bias
+- **Regime Detection Lag:** Economic regime classification operates on quarterly lag and may miss rapid market transitions
+- **Transaction Costs:** Backtest results do not include trading costs, market impact, slippage, or implementation shortfall
+- **Data Quality Dependency:** Model performance critically depends on accurate, timely fundamental and macroeconomic data
+- **Limited Historical Coverage:** Only tested on 2000-2025 period, may not generalize to different market regimes
+- **No Professional Oversight:** Model built independently without institutional risk management or compliance review
 
-**Technical Limitations**:
-- Requires substantial BigQuery compute resources
-- 5-year minimum history requirement excludes many stocks
-- Binary classification loses information vs probabilistic ranking
-- Fixed industry taxonomy may become stale over time
-
-## License
-
-MIT License - See LICENSE file for details.
-
-**Academic Use**: Please cite this work in academic research:
-```
-@software{value_quality_model_2025,
-  title={Adaptive Valuation Stock Selection Model with PCA-Based Regime Classification},
-  author={Matt Imig},
-  year={2025},
-  url={https://github.com/your-username/value-quality-stock-selection}
-}
-```
-
----
-
-**Model Version**: 2.1.0  
-**Last Updated**: November 2024  
-**BigQuery SQL Version**: Standard SQL 2011  
-**Implementation**: Pure BigQuery SQL (no Python required for core model)
-
-For questions, issues, or collaboration opportunities, please open a GitHub issue or contact [matthewimig89@gmail.com].
+**Technical Limitations:**
+- Requires substantial BigQuery compute resources for training and scoring
+- 5-year minimum history requirement excludes many stocks from universe
+- Binary classification approach loses granularity vs continuous probability scores
+- Fixed industry taxonomy may become stale as sector definitions evolve
+- No built-in position sizing, portfolio construction, or risk management logic
